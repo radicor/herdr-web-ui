@@ -67,8 +67,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   greeted you. ([#500](https://github.com/devswha/herdr-web-ui/pull/500))
 - A 500 from the server no longer repeats the system's own error text, which carried absolute paths
   and the herdr socket location; it names a short id you can quote in a bug report instead.
-- The terminal now announces itself: it is a labelled region named after the pane, and its text is
-  exposed to a screen reader as a real accessibility tree.
+- The terminal now announces itself: it is a labelled region named after the pane, so a screen
+  reader names the pane before its content.
 - Settings, the command palette, the file viewer, the file browser and the new-workspace dialog keep
   Tab inside them and give the focus back to whatever opened them.
 - The tabs of a workspace name the pane region they govern, so a screen reader announces the tab and

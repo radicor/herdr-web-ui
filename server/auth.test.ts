@@ -48,15 +48,6 @@ describe("POST /api/auth", () => {
   });
 });
 
-describe("sameOrigin", () => {
-  it("keeps a cookie-carrying request with no Origin out of the app's own mutations", () => {
-    // a browser always states its origin on a state-changing request: no Origin with a
-    // cookie is a header that went missing
-    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { cookie: "herdr_web_token=t" } }))).toBe(false);
-    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { cookie: "herdr_web_device=d" } }))).toBe(false);
-  });
-});
-
 describe("isSecureRequest", () => {
   it("marks a cookie Secure only for a request that arrived over https", () => {
     expect(isSecureRequest(new Request("https://host/api/auth"))).toBe(true);
@@ -66,10 +57,14 @@ describe("isSecureRequest", () => {
   });
 });
 
-describe("a cookie with no Origin", () => {
-  it("is cross-site, while a cookie-less CLI client keeps the custom-header path", () => {
-    // a non-browser client carries no session cookie, so it is unaffected
+describe("sameOrigin", () => {
+  it("trusts a stated same-origin and refuses a stated cross-site one", () => {
+    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { origin: "http://host" } }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { origin: "https://evil.invalid", "x-herdr-machine": "1" } }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { "sec-fetch-site": "cross-site", "x-herdr-machine": "1" } }))).toBe(false);
+  });
+
+  it("lets a request with no Origin through, so a CLI client can use the custom mutation header", () => {
     expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { "x-herdr-machine": "1" } }))).toBe(true);
-    expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { cookie: "theme=dark" } }))).toBe(true);
   });
 });

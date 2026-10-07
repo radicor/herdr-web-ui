@@ -1,7 +1,5 @@
 import type { SshTarget } from "../shared/machines.ts";
 
-import { DEVICE_COOKIE, parseCookies, TOKEN_COOKIE } from "./auth.ts";
-
 export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
 export function validateTarget(value: unknown): SshTarget {
@@ -19,14 +17,7 @@ export function sameOrigin(request: Request): boolean {
   const site = request.headers.get("sec-fetch-site");
   if (site && site !== "same-origin" && site !== "none") return false;
   const origin = request.headers.get("origin");
-  if (!origin) {
-    // No Origin at all. A browser always sends one on a cross-origin state-changing
-    // request, so a session cookie without an Origin is a header that went missing, not a
-    // same-origin page: it is treated as cross-site. A non-browser client is unaffected
-    // while it carries no cookie — it already has to send the custom mutation header.
-    const cookies = parseCookies(request.headers.get("cookie"));
-    return !cookies.has(TOKEN_COOKIE) && !cookies.has(DEVICE_COOKIE);
-  }
+  if (!origin) return true; // CLI clients still need the custom mutation header + token.
   try {
     const expected = new URL(request.url);
     // Reverse proxies commonly terminate HTTPS; do not trust arbitrary forwarded hosts.

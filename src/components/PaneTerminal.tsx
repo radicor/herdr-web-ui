@@ -336,12 +336,6 @@ export function PaneTerminal({
       // a scrollbar column - 15px by fallback wherever scrollbars are overlays - and the last
       // columns of the hero surface go dead.
       scrollback: 0,
-      // xterm's accessibility tree: the only thing that makes the grid reachable at all, since
-      // the screen itself is drawn to canvas. Measured on the demo shell pane both ways: the
-      // tree is 0 rows without this and the full grid with it, while typing, Backspace (DEL
-      // still reaches the pane), Enter, IME Enter and the wheel-to-mouse-report path are
-      // unchanged, and the viewport still has no scroll range to give the dead columns back.
-      screenReaderMode: true,
       allowProposedApi: true,
       fontSize: terminalFontSize,
       // a chosen family follows in the font effect below, once its faces have loaded
@@ -1569,9 +1563,8 @@ export function PaneTerminal({
       <div className="terminal-surface">
         {/* the grid itself carries no accessible name (xterm draws the screen to canvas and hides
             it), so the region around it carries the pane's: a screen reader announces which pane
-            this is before it reaches the accessibility tree inside. No tabIndex: xterm's helper
-            textarea takes the keyboard here on attach and the tree (screenReaderMode) follows it,
-            so a stop on the wrapper would only be an empty one ahead of both. */}
+            this is. No tabIndex: xterm's helper textarea takes the keyboard here on attach, so a
+            stop on the wrapper would only be an empty one ahead of it. */}
         <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} role="region" aria-roledescription="terminal" aria-label={terminalName} />
         {paneId !== null && chatView && (
           <RenderBoundary resetKey={paneId} fallback={(retry) => (

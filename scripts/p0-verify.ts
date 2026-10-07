@@ -3,9 +3,12 @@
  * live herdr: what the terminal exposes to a screen reader (A1), and whether the app's own
  * Content-Security-Policy reaches the page and stays clean through a real load (S3).
  *
- * The demo transport is a stub, so this proves the client-side surface only — the access
- * gate's server side is covered by server/open-access.test.ts. Run after `bun run build:site`
- * (or `bun run build`), with CHROME_PATH pointed at a Chromium.
+ * A1's surface here is the labelled region; xterm's own accessibility tree is the separate
+ * screenReaderMode investigation the plan scopes out of P0, since the bundled patch's Gboard
+ * backspace guard is off while that mode is on. The demo transport is a stub, so this proves
+ * the client-side surface only — the access gate's server side is covered by
+ * server/open-access.test.ts. Run after `bun run build:site` (or `bun run build`), with
+ * CHROME_PATH pointed at a Chromium.
  */
 import assert from "node:assert/strict";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -27,25 +30,16 @@ interface TerminalA11y {
   hasRegion: boolean;
   roledescription: string | null;
   label: string | null;
-  /** xterm's accessibility tree, built only when screenReaderMode is on; 0 means the flag never took */
-  treeRows: number;
-  liveRegion: boolean;
   accessibleName: string | null;
 }
 
 const terminalA11y = (page: Page): Promise<TerminalA11y> => page.evaluate(() => {
   const host = document.querySelector(".pane-terminal");
-  if (!host) return { hasRegion: false, roledescription: null, label: null, treeRows: 0, liveRegion: false, accessibleName: null };
-  // xterm builds .xterm-accessibility > .xterm-accessibility-tree (role=list, one row per line)
-  // plus .live-region only when screenReaderMode is set, so their presence is the flag's proof
-  const tree = document.querySelector(".xterm-accessibility-tree");
-  const rows = tree ? tree.querySelectorAll("[role='listitem']").length : 0;
+  if (!host) return { hasRegion: false, roledescription: null, label: null, accessibleName: null };
   return {
     hasRegion: host.getAttribute("role") === "region",
     roledescription: host.getAttribute("aria-roledescription"),
     label: host.getAttribute("aria-label"),
-    treeRows: rows,
-    liveRegion: !!document.querySelector(".xterm-accessibility .live-region"),
     accessibleName: (host as HTMLElement).ariaLabel,
   };
 });
@@ -91,9 +85,7 @@ async function main() {
   assert.equal(a11y.hasRegion, true, "the terminal host is a region");
   assert.equal(a11y.roledescription, "terminal", "aria-roledescription is terminal");
   assert.ok(a11y.label && a11y.label.length > 0, "the region is labelled");
-  assert.ok(a11y.treeRows > 0, `screen-reader tree rows appeared (got ${a11y.treeRows}); screenReaderMode is not taking effect`);
-  assert.equal(a11y.liveRegion, true, "xterm's live region exists");
-  console.log(`PASS terminal is a labelled region announced as a terminal, ${a11y.treeRows} screen-reader rows and a live region`);
+  console.log(`PASS the terminal is a labelled region announced as a terminal (${JSON.stringify(a11y.label)})`);
 
   // the label follows the pane: open a workspace and re-read
   await page.evaluate(async () => {
