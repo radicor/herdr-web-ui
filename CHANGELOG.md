@@ -41,6 +41,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   minified file, no longer freezes the chat: a megabyte of them took a minute or more to read, and
   now takes milliseconds. What every message shows is unchanged.
   ([#574](https://github.com/devswha/herdr-web-ui/pull/574))
+- Held terminal input typed while a pane is offline is forgotten after a day, counted from the last
+  keystroke: a pane you leave behind does not keep what you typed on disk indefinitely, and a record
+  that is undated or hand-edited restores as nothing held.
+- A send the socket refuses keeps the text on screen — you retry it or copy it, and it is never
+  queued — but it no longer stays on disk behind you: the draft's stored copy goes with the click
+  that decided it.
+- Two tabs open on one pane can no longer send the same message. The first's send is written where
+  the second reads its draft, so the second sees the send on its way instead of the text it carries;
+  a lease longer than the submit timeout keeps a send still on its way from being seconded, and a
+  tab that closed mid-send is read as abandoned after two minutes.
 
 ### Maintenance
 - The terminal now announces itself: it is a labelled region named after the pane, so a screen

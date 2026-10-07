@@ -9,7 +9,7 @@ import "./PaneTerminal.css";
 import { HerdrSocket, type SubmitResult } from "../lib/ws.ts";
 import { clipboardKey, hasModifiers, physicalKey, terminalChord, navigationSequence, keyFromData, ctrlEnterSequence, modifyOtherKeysLevel, NO_STICKY_MODIFIERS, type StickyModifiers } from "../lib/keys.ts";
 import { keyBarInputSequence, type KeyBarKeyItem } from "../lib/keyBar.ts";
-import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
+import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, restoreDraft, type InputDraft } from "../lib/draft.ts";
 import { messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
@@ -248,8 +248,11 @@ export function PaneTerminal({
   useEffect(() => {
     if (!paneId || draftState.owner !== paneStorageId(machineId, paneId)) return;
     const key = `herdr-web-ui:terminal-draft:${draftState.owner}`;
-    try { if (draftIsEmpty(draft)) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(draft)); } catch {}
+    try { if (draftIsEmpty(draft)) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify({ ...draft, at: Date.now() })); } catch {}
   }, [draftState, paneId, machineId, draft]);
+  // A draft left behind by a closed pane keeps its entry: nothing reads it again, and the
+  // day-long TTL retires it. It is not dropped on a pane switch — that would discard text the
+  // user has not sent or discarded, and the draft is exactly what a return to the pane restores.
   // transient OSC 52 feedback ("copied") — a pill in the banner column
   const [clipboardNote, setClipboardNote] = useState<string | null>(null);
   const clipboardTimerRef = useRef<number | null>(null);
@@ -1285,11 +1288,10 @@ export function PaneTerminal({
     secretRef.current = null;
     setSecret(null);
     term.options.disableStdin = observeRef.current;
+    // a record past its TTL, an undated one, and a hand-edited one all restore as nothing held
     let saved = EMPTY_DRAFT;
     try {
-      const value = paneId ? JSON.parse(localStorage.getItem(`herdr-web-ui:terminal-draft:${paneStorageId(machineId, paneId)}`) ?? "null") : null;
-      // a draft stored by an earlier version counts keys that were left out instead: only its text is kept
-      if (value && typeof value.text === "string") saved = { text: value.text, truncated: value.truncated === true };
+      saved = paneId ? restoreDraft(localStorage.getItem(`herdr-web-ui:terminal-draft:${paneStorageId(machineId, paneId)}`), Date.now()) : EMPTY_DRAFT;
     } catch {}
     setDraft(saved);
     draftPaneRef.current = paneId;
@@ -1363,8 +1365,14 @@ export function PaneTerminal({
     const socket = socketRef.current;
     const pane = paneRef.current;
     if (!socket || !pane || draft.text.length === 0 || !socket.connected || secretRef.current !== null || heldRef.current) return;
+    // the click is the user's decision about this text either way, so it leaves the browser
+    // profile either way. A frame the socket refuses keeps the text on screen (they retry or
+    // copy it) and is never queued; it just does not stay on disk behind them.
     if (socket.sendInput(pane, draft.text)) setDraft(EMPTY_DRAFT);
-  }, [draft]);
+    else {
+      try { localStorage.removeItem(`herdr-web-ui:terminal-draft:${paneStorageId(machineId, pane)}`); } catch {}
+    }
+  }, [draft, machineId]);
 
   const discardDraft = useCallback(() => {
     setDraft(EMPTY_DRAFT);
