@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { applyToDraft, draftIsEmpty, EMPTY_DRAFT } from "./draft.ts";
+import { applyToDraft, draftIsEmpty, DRAFT_TTL_MS, EMPTY_DRAFT, restoreDraft } from "./draft.ts";
 
 describe("applyToDraft", () => {
   it("appends a printable character to the draft", () => {
@@ -46,4 +46,34 @@ it("holds multi-codepoint IME commits without splitting a surrogate at the limit
   for (const text of ["한글", "😀", "e\u0301", "abc"]) expect(applyToDraft(EMPTY_DRAFT, text).text).toBe(text);
   expect(applyToDraft({ text: "a".repeat(1023), droppedSpecial: 0 }, "😀").text).toHaveLength(1023);
   expect(applyToDraft(EMPTY_DRAFT, "\x1b[200~text\x1b[201~").text).toBe("");
+});
+
+describe("restoreDraft", () => {
+  const now = 1_800_000_000_000;
+  const record = (at: number) => JSON.stringify({ text: "hunter2", droppedSpecial: 0, at });
+
+  it("restores a draft written inside the TTL", () => {
+    expect(restoreDraft(record(now - 1000), now)).toEqual({ text: "hunter2", droppedSpecial: 0 });
+  });
+
+  it("forgets a draft past the TTL", () => {
+    expect(restoreDraft(record(now - DRAFT_TTL_MS - 1), now)).toEqual(EMPTY_DRAFT);
+  });
+
+  it("forgets an undated record: an unknown age is not a recent one", () => {
+    expect(restoreDraft(JSON.stringify({ text: "hunter2", droppedSpecial: 0 }), now)).toEqual(EMPTY_DRAFT);
+  });
+
+  it("holds nothing for a missing, malformed or hand-edited record", () => {
+    expect(restoreDraft(null, now)).toEqual(EMPTY_DRAFT);
+    expect(restoreDraft("not json", now)).toEqual(EMPTY_DRAFT);
+    expect(restoreDraft(JSON.stringify({ text: 7, droppedSpecial: 0, at: now }), now)).toEqual(EMPTY_DRAFT);
+    expect(restoreDraft(JSON.stringify({ text: "a", droppedSpecial: 1.5, at: now }), now)).toEqual(EMPTY_DRAFT);
+    expect(restoreDraft(JSON.stringify({ text: "a", droppedSpecial: 0, at: "soon" }), now)).toEqual(EMPTY_DRAFT);
+  });
+
+  it("keeps the special keys it counted, and forgets them with the text", () => {
+    expect(restoreDraft(JSON.stringify({ text: "ls", droppedSpecial: 3, at: now - DRAFT_TTL_MS - 1 }), now)).toEqual(EMPTY_DRAFT);
+    expect(restoreDraft(JSON.stringify({ text: "ls", droppedSpecial: 3, at: now }), now)).toEqual({ text: "ls", droppedSpecial: 3 });
+  });
 });

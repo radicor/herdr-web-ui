@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerFeature, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, handleAuthRequest, isAuthenticated, parseCookies, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -16,7 +16,7 @@ import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
-import { conversationImage, ConversationUnavailable, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
+import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
@@ -75,6 +75,7 @@ import { MachineManager } from "./machines.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
+import { installRejectionLogging } from "./process-errors.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
 /**
@@ -146,6 +147,12 @@ const SERVER_FEATURES: ServerFeature[] = ["submit", "secret-input", "input-ready
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
+/** HERDR_WEB_ALLOW_OPEN=1: the owner's own opt-in for the "open LAN" shape (server/access.ts). */
+const allowOpenEnv = (): boolean => process.env["HERDR_WEB_ALLOW_OPEN"] === "1";
+
+/** pane.read's own enums; a read outside them is refused here rather than sent to herdr as a guess (the generated types are open-ended) */
+const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapped", "visible"]);
+const READ_FORMATS = new Set<ReadFormat>(["ansi", "text"]);
 
 const AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
@@ -315,6 +322,8 @@ export function createServer(
     tailscaleOwner?: string | null;
     /** Native Codex store; defaults to CODEX_HOME. Tests use an isolated store. */
     codexHome?: string;
+    /** the owner's "open LAN" opt-in (HERDR_WEB_ALLOW_OPEN=1): a non-loopback client that holds no token and no device is let in until one is paired. Unset refuses it. */
+    allowOpen?: boolean;
     updates?: UpdateService;
     /** updates herdr itself (server/herdr-update.ts); unset, the app offers no herdr update. Tests pass one that runs a stand-in herdr. */
     herdrUpdate?: HerdrUpdater;
@@ -344,6 +353,7 @@ export function createServer(
     sidecar?: boolean;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
+  installRejectionLogging();
   const attachments = new Map<string, PaneAttachment>();
   /** whether this bridge can `terminal attach`: herdr is asked once, and the PTY sidecar has to be runnable here (server/pty/sidecar.ts) */
   /** whether the sidecar can run, settled as the server starts so that attach, /api/health and /api/bridge tell one answer; a forced answer (tests) stands in for it */
@@ -373,6 +383,8 @@ export function createServer(
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
+  /** "Open LAN" mode, the owner's own opt-in: without it a LAN peer holding no token and no device gets nothing (server/access.ts) */
+  const allowOpen = options.allowOpen ?? allowOpenEnv();
   const usage = options.usage ?? new UsageService();
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
@@ -991,6 +1003,8 @@ export function createServer(
     },
     onPaneEnded: (paneId) => {
       completions.forget(paneId);
+      // the terminal is gone, so is whatever its chat parsed (server/conversation.ts)
+      forgetPaneTranscriptState(paneId);
       broadcastAll({ type: "pane-exited", pane_id: paneId });
       push.onEnded(paneId).catch(logPushError);
     },
@@ -1018,6 +1032,7 @@ export function createServer(
         device: devices.match(parseCookies(request.headers.get("cookie")).get(DEVICE_COOKIE)),
         ...identityOf(),
         tokenConfigured: token !== "",
+        allowOpen,
         gated: devices.gated,
       });
       const authenticated = access.level === "full" || (bridgePath && bridgeAuthorized);
@@ -1035,10 +1050,18 @@ export function createServer(
       // An empty segment ("//") reads as another route to the checks below, while the PC proxy
       // drops it before forwarding: `/api/machines/<id>//fs/file` would pass as not a file read.
       if (pathname.startsWith("/api/") && pathname.includes("//")) return jsonResponse({ error: { code: "not_found", message: "not found" } }, 404);
-      // Watching a terminal grants no arbitrary filesystem access: those files include credentials.
+      // What a watching device must not reach, spelled out rather than inferred from the
+      // method: file contents (those files include credentials) and a directory listing
+      // (names and sizes are the shape of a repository the terminals never print), plus
+      // every mutation except the two below.
       const fileRead = /^\/api\/(?:machines\/[^/]+\/)?fs\//.test(pathname);
-      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/push/test";
-      if (readOnly && (fileRead || mutating && !ownPreferences)) {
+      const directoryListing = /^\/api\/(?:machines\/[^/]+\/)?workspace\/directories$/.test(pathname);
+      // Signing a device's own alerts in is a preference of that device, so `watch` keeps
+      // it; the endpoint it registers is https-only (server/push.ts), which is what makes
+      // that safe. Sending one is not: /api/push/test makes the server POST to whatever a
+      // caller put in the store, so it stays with a session that can drive.
+      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe";
+      if (readOnly && (fileRead || directoryListing || mutating && !ownPreferences)) {
         return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
       }
 
@@ -1085,7 +1108,7 @@ export function createServer(
         return new Response("websocket upgrade required", { status: 426 });
       }
 
-      if (pathname === "/api/auth") return handleAuthRequest(request, token);
+      if (pathname === "/api/auth") return handleAuthRequest(request, token, ip?.address ?? null);
       if (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) {
         try {
           const response = await handleDeviceRequest(request, pathname, devices, access);
@@ -1447,6 +1470,7 @@ export function createServer(
       }
 
       if (pathname === "/api/pane/read") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
         const linesRaw = url.searchParams.get("lines");
@@ -1454,13 +1478,14 @@ export function createServer(
         if (lines !== undefined && !Number.isFinite(lines)) {
           return badRequest("invalid_lines", "lines must be a number");
         }
+        // herdr knows these enums and has its own answer for a wrong one, but a read this
+        // route never meant to make is refused here rather than sent on as a guess
+        const source = url.searchParams.get("source") ?? "visible";
+        if (!READ_SOURCES.has(source)) return badRequest("invalid_source", `source must be one of ${[...READ_SOURCES].join(", ")}`);
+        const format = url.searchParams.get("format") ?? "text";
+        if (!READ_FORMATS.has(format)) return badRequest("invalid_format", `format must be one of ${[...READ_FORMATS].join(", ")}`);
         try {
-          const read = await paneRead({
-            paneId,
-            source: (url.searchParams.get("source") ?? "visible") as never,
-            format: (url.searchParams.get("format") ?? "text") as never,
-            ...(lines === undefined ? {} : { lines }),
-          });
+          const read = await paneRead({ paneId, source: source as ReadSource, format: format as ReadFormat, ...(lines === undefined ? {} : { lines }) });
           return jsonResponse({ read });
         } catch (error) {
           return errorResponse(error);
@@ -1600,6 +1625,8 @@ export function createServer(
           // herdr emits pane.closed -> the collector broadcasts session-changed, so
           // every client refetches and the pane leaves sidebars on its own
           await paneClose(payload.pane_id);
+          // the pane is gone: whatever its chat parsed is released with it (server/conversation.ts)
+          forgetPaneTranscriptState(payload.pane_id);
           return jsonResponse({ ok: true });
         } catch (error) {
           return errorResponse(error);
@@ -2034,9 +2061,22 @@ if (import.meta.main) {
   process.on("SIGINT", shutdown);
   if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
-  if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
-    console.error(
-      `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
-    );
+  if (!LOOPBACK_HOSTNAMES.has(instance.hostname)) {
+    if (allowOpenEnv()) {
+      console.error(
+        `WARNING: HERDR_WEB_ALLOW_OPEN=1 - listening on ${instance.hostname} with no HERDR_WEB_TOKEN means anyone who can reach this address can type into your terminals and read any file your user can, until a device is paired (Settings → Devices, on this PC); set HERDR_WEB_TOKEN=<token> or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
+      );
+    } else if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "") {
+      console.error(
+        `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - a device that reaches this address from outside this PC needs a paired device or the token, so pair your devices (Settings → Devices, on this PC), set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1. Set HERDR_WEB_ALLOW_OPEN=1 only if you mean anyone who can reach this address to have that control until you pair a device.`,
+      );
+    }
+    // The bind address says nothing about the transport: a token cookie and every keystroke
+    // travel in the clear on plain http, so a listener on the same network gets them.
+    if ((process.env["HERDR_WEB_TOKEN"] ?? "") !== "") {
+      console.error(
+        `WARNING: listening on http://${instance.hostname}:${instance.port} - HERDR_WEB_TOKEN is not confidential over cleartext http; on an untrusted network anyone who can read the traffic has the token and everything you type. Reach this PC over Tailscale, put it behind a TLS-terminating proxy, or keep HOST=127.0.0.1.`,
+      );
+    }
   }
 }

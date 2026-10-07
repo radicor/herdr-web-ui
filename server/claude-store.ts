@@ -48,6 +48,11 @@ export function forgetClaudeSessions(): void {
   found.clear();
 }
 
+/** Drops what a project scan remembered about one transcript file: the scan runs again if it is ever asked for. */
+export function forgetClaudeSessionFile(path: string): void {
+  for (const [key, value] of found) if (value === path) found.delete(key);
+}
+
 /**
  * Claude's native PID record names the current session even without Herdr's hook.
  * Linux's exact process-start ticks reject leftovers after a PID is reused. Read

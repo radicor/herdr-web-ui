@@ -8,6 +8,7 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, useSettings, forgetPaneViews } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useT } from "../lib/i18n.ts";
+import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KEY_BAR_EXTRAS } from "../lib/keys.ts";
 import { EXTRA_KEY_CAPS } from "./KeyBar.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
@@ -145,6 +146,7 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, herdrVer
   const t = useT();
   const installPrompt = useInstallPrompt();
   const firstControlRef = useRef<HTMLButtonElement>(null);
+  const surface = useFocusTrap<HTMLElement>(open, { initialFocus: firstControlRef });
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
   // server-side: the web server updates PC bridges, so it keeps this choice
@@ -202,7 +204,6 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, herdrVer
 
   useEffect(() => {
     if (!open) return;
-    firstControlRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -216,7 +217,7 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, herdrVer
 
   return (
     <div className="modal-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
         <header className="modal-header">
           <h2 className="modal-title" id="settings-title">{t("Settings")}</h2>
           <button type="button" className="icon-button" aria-label={t("Close settings")} onClick={onClose}><X /></button>
@@ -265,7 +266,7 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, herdrVer
               </div>
             </div>
             <div className="settings-row">
-              <div><span className="settings-label">{t("Sidebar grouping")}</span><span className="settings-description">{t("Group sessions by workspace or by full folder path on each PC")}</span></div>
+              <div><span className="settings-label">{t("Sidebar grouping")}</span><span className="settings-description">{t("Group workspaces by name or by full folder path on each PC")}</span></div>
               <div className="segmented" aria-label={t("Sidebar grouping")}>
                 {(["workspace", "directory"] as const).map((grouping) => (
                   <button key={grouping} type="button" aria-pressed={settings.sidebarGrouping === grouping} onClick={() => update({ sidebarGrouping: grouping })}>
@@ -298,6 +299,10 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, herdrVer
               <select id="terminal-input-mode" className="input" value={settings.terminalInputMode} onChange={(event) => update({ terminalInputMode: event.target.value as "auto" | "line" | "direct" })}>
                 <option value="auto">{t("Automatic")}</option><option value="line">{t("Input line")}</option><option value="direct">{t("Direct typing")}</option>
               </select>
+            </div>
+            <div className="settings-row">
+              <div><span className="settings-label">{t("Clipboard from a pane")}</span><span className="settings-description">{t("Off: nothing running in a pane can set this device's clipboard. On: a program in a pane that asks to copy has its text put there, as a copy you made yourself would.")}</span></div>
+              <Toggle label={t("Clipboard from a pane")} checked={settings.terminalOsc52} onChange={(terminalOsc52) => update({ terminalOsc52 })} />
             </div>
             <div className="settings-row">
               <div><span className="settings-label">{t("Key bar")}</span><span className="settings-description">{t("Extra keys in the bar under the terminal on a touch screen. Esc, Tab, Ctrl, the arrows and ^C are always there.")}</span></div>

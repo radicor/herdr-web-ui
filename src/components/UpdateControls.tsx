@@ -6,7 +6,7 @@ import { describeUpdate } from "../lib/updateProgress.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import "./Machines.css";
 import "./UpdateControls.css";
-import { useT } from "../lib/i18n.ts";
+import { useLocale, useT } from "../lib/i18n.ts";
 
 declare const __APP_VERSION__: string;
 
@@ -29,6 +29,7 @@ function UpdateProgress({ status, fallback }: { status: UpdateStatus | null; fal
 export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const t = useT();
   const { status, error, busy, needsReload, request } = updates;
+  const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
   return <section className="settings-section settings-updates">
@@ -47,7 +48,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
         <button type="button" className="btn btn-primary" disabled={busy || !status.available || !!status.blocked_reason} onClick={() => void request("install")}>{t("Update and restart")}</button>
       </div>
     </>}
-    {status?.checked_at && <p className="settings-hint">Last checked {new Date(status.checked_at).toLocaleString()}</p>}
+    {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
     {needsReload && <p className="settings-hint">{t("The server was updated. Save any unsent drafts, then")} <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button></p>}
   </section>;
 }

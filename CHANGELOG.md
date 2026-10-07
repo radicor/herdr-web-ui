@@ -16,6 +16,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   when it is set) or the `OPENCODE_API_KEY` variable. An OpenCode key without a Go
   subscription shows no meter.
   ([#444](https://github.com/devswha/herdr-web-ui/pull/444) by @diogo7dias)
+- Settings → Appearance gained a **Clipboard from a pane** switch, off by default: a command running in a
+  pane can no longer put text on your clipboard unless you allow it.
 
 ### Changed
 - On macOS a Codex pane's chat costs the server about a sixth of what it did on each poll (a
@@ -28,6 +30,19 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   CSS): KaTeX, which draws math in the chat, loads with the first reply that has an expression.
   Until it arrives, that expression shows in its source form, as it did when KaTeX could not read it.
   ([#493](https://github.com/devswha/herdr-web-ui/pull/493) by @kilhyeonjun)
+- Until a device is paired and no token is set, a LAN or proxied address no longer gets in at all — the
+  client is asked for the token, and `HERDR_WEB_ALLOW_OPEN=1` brings back the old open behaviour.
+  Before, anything that reached a bound non-loopback address typed into every terminal and could pair
+  itself a credential that lasted a year.
+- Starting a device pairing is now something an owner does — from the PC itself, with the token, or from
+  a device already paired — and completing one with a code still works from anywhere. Before, any
+  client that reached the address could start one and keep the credential.
+- A wrong access token is refused with a growing wait (five tries, then a backoff up to a minute)
+  instead of being retried without bound.
+- The app now sends itself a Content-Security-Policy, so third-party content rendered in a chat —
+  math, agent marks — cannot run script in the app.
+- A web-push subscription must be an https endpoint, and a watching device can no longer make the
+  server send a notification to an address of its choosing.
 
 ### Fixed
 - With Language set to **System**, English stays selected when it is the browser's first
@@ -50,6 +65,51 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   Claude do in …?"), as an OmO pane already did. Before, until the first message the chat
   showed the terminal's text or an empty line instead, so a new workspace or worktree never
   greeted you. ([#500](https://github.com/devswha/herdr-web-ui/pull/500))
+- A 500 from the server no longer repeats the system's own error text, which carried absolute paths
+  and the herdr socket location; it names a short id you can quote in a bug report instead.
+- The terminal now announces itself: it is a labelled region named after the pane, and its text is
+  exposed to a screen reader as a real accessibility tree.
+- Settings, the command palette, the file viewer, the file browser and the new-workspace dialog keep
+  Tab inside them and give the focus back to whatever opened them.
+- The tabs of a workspace name the pane region they govern, so a screen reader announces the tab and
+  the pane together.
+- Agent headings in a chat no longer pose as the app's own page structure; they sit below the app's
+  own headings and look the same as before.
+- The "reconnecting" line and the composer's terminal-only hint are announced when they appear.
+- A chat locked out by the token gate, the "Last checked" line under Settings → Updates (with its
+  date in your language) and a remote PC's state word in the sidebar are translated like the rest of
+  the UI.
+- The alerts menu item now says the same thing the same way in every state.
+- The sidebar grouping setting says "Group workspaces by…"; it groups workspaces.
+- Held terminal input typed while disconnected is forgotten after a day, and a pane you leave behind
+  leaves nothing behind in the browser.
+- A link printed in the terminal opens only if it is an http(s) address, on both link paths.
+- Two tabs open on one pane can no longer send the same message: the second sees the first's send on
+  its way.
+- Math in a chat refuses an unknown TeX command instead of rendering it anyway; it falls back to the
+  source form, as before.
+- A row's ⋯ menu is capped to the room its button leaves and scrolls instead of being cut off by the
+  viewport, so the pane picker of a tab with many panes keeps every entry reachable with the pointer
+  as well as the keyboard. Before, items below the fold were rendered but unreachable.
+- A row menu open while the window crosses the 640 px breakpoint now switches between bottom sheet and
+  popover instead of keeping the form it opened with.
+- The workspace drawer a narrow window opened is closed again when the window is widened past 768 px,
+  so narrowing it no longer brings back a drawer and its scrim unasked.
+- **Add PC**, **Reconnect PC** and **Update remote bridge** open as a bottom sheet on a phone, like
+  every other dialog, and keep clear of the on-screen keyboard. Before, the one native dialog stayed
+  a centred card on a phone.
+- **Remove PC**'s first click is a quiet ghost button that only arms the removal; the second is the
+  red one, as revoking a device already was.
+- A PC's rename, connect and disconnect buttons disable while their request is in flight, so a double
+  click no longer sends two overlapping requests.
+- A failed pane or workspace rename keeps the field open with what you typed, so a network blip no
+  longer makes you write the name again.
+- A workspace reorder that fails no longer undoes a later, successful reorder.
+- A tab watching several busy panes gives up its oldest cached conversation answers when they grow
+  past a byte budget, not only past sixteen of them.
+- The usage meters' note is the same size as every other advisory and empty state.
+- The PDF viewer's page colour, the pill radii, the tab dot and the pairing-code size come from
+  design tokens now, and the pairing code follows the compact density setting.
 
 ## [0.3.51] - 2026-10-06
 

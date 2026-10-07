@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackHost, type AccessInput } from "./access.ts";
 
 const device = { id: "d1", label: "Phone", role: "drive" as const };
-const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, tokenMatched: false, device: null, owner: null, tagged: false, tokenConfigured: false, gated: false };
+const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, tokenMatched: false, device: null, owner: null, tagged: false, tokenConfigured: false, gated: false, allowOpen: false };
 const via = (input: Partial<AccessInput>) => { const a = decideAccess({ ...base, ...input }); return a.level === "full" ? a.via : `refused:${a.reason}`; };
 
 describe("decideAccess", () => {
@@ -11,10 +11,17 @@ describe("decideAccess", () => {
     expect(via({ forwarded: true, gated: true })).toBe("refused:pairing_required");
   });
 
-  it("keeps everything open, as before, while no token and no device exist", () => {
-    expect(via({ loopback: false })).toBe("open");
-    expect(via({ loopback: true, forwarded: true })).toBe("open");
+  it("denies a LAN client by default, and only opens while the owner asked for it", () => {
+    // no token, nothing paired, nothing asked for: a peer on the LAN gets the token gate
+    expect(via({ loopback: false })).toBe("refused:token_required");
+    expect(via({ loopback: true, forwarded: true })).toBe("refused:token_required");
+    // HERDR_WEB_ALLOW_OPEN=1 is the old shape, kept deliberately
+    expect(via({ loopback: false, allowOpen: true })).toBe("open");
+    expect(via({ loopback: true, forwarded: true, allowOpen: true })).toBe("open");
     expect(via({ loopback: false, gated: true })).toBe("refused:pairing_required");
+    // this PC is never behind either gate, and the opt-in does not open the internet
+    expect(via({})).toBe("local");
+    expect(via({ loopback: false, allowOpen: true, funnel: true })).toBe("refused:pairing_required");
   });
 
   it("never treats a Funnel request as open", () => {
@@ -33,7 +40,7 @@ describe("decideAccess", () => {
     expect(via({ forwarded: true, owner: "me@example.com" })).toBe("refused:pairing_required");
     expect(via({ forwarded: true, owner: "me@example.com", device })).toBe("device");
     // no owner known yet: the header decides nothing either way
-    expect(via({ forwarded: true, tailscaleLogin: "me@example.com", owner: null })).toBe("open");
+    expect(via({ forwarded: true, tailscaleLogin: "me@example.com", owner: null })).toBe("refused:token_required");
   });
 
   it("asks a tagged PC's visitors to pair, its owner included, and never calls them another user", () => {
