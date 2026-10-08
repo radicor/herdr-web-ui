@@ -500,6 +500,8 @@ export const JA: Record<string, string> = {
   "Earlier messages": "以前のメッセージ",
   "beginning of conversation": "会話の始まり",
   "Conversation unavailable — show terminal output": "会話を読み取れません。ターミナルの出力を表示",
+  "Clipboard from a pane": "ペインからクリップボードへ",
+  "Off: nothing running in a pane can set this device's clipboard. On: a program in a pane that asks to copy has its text put there, as a copy you made yourself would.": "オフの場合、ペインで動いているものは何もこのデバイスのクリップボードを変更できません。オンの場合、ペインのプログラムがコピーを要求すると、自分でコピーしたときと同じようにテキストが入ります。",
   "reconnecting…": "再接続しています…",
   "What should {agent} do in {folder}?": "{folder} で {agent} に何を頼みますか？",
   "No conversation yet — say something below": "まだ会話はありません。下から話しかけてください",
