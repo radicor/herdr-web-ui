@@ -17,12 +17,38 @@ import { timingSafeEqual } from "node:crypto";
 
 import { badRequest, jsonResponse } from "./http.ts";
 
-const COOKIE_NAME = "herdr_web_token";
+export const TOKEN_COOKIE = "herdr_web_token";
 /** a paired device's own credential; the same flags as the token cookie */
 export const DEVICE_COOKIE = "herdr_web_device";
 const COOKIE_MAX_AGE_SECONDS = 31536000;
+
+/**
+ * Guessing budget for a wrong token, per client. A token is meant to be a long random string,
+ * but an owner who picked a short one would otherwise be guessable without bound, so a run of
+ * wrong tokens costs the client a wait that doubles with every further failure and is spent
+ * again by one right token. The comparison itself stays constant-time; this only makes it
+ * expensive to keep asking.
+ */
+const AUTH_FAILURE_BUDGET = 5;
+const AUTH_BACKOFF_MS = 1_000;
+const AUTH_BACKOFF_MAX_MS = 60_000;
+/** addresses remembered; past the cap the ones whose wait is over are dropped first */
+const AUTH_CLIENTS_MAX = 1024;
+const authAttempts = new Map<string, { failures: number; until: number }>();
 const BEARER_PREFIX = "bearer ";
 const encoder = new TextEncoder();
+
+/**
+ * The bucket a client's wrong tokens are counted against. A proxy in front makes every visitor
+ * share the address it connected from, so a proxied request is kept apart from this PC's own:
+ * the owner signs in from the PC with nothing in front of it, and another client's guesses must
+ * not spend that budget. An address the server cannot see (a unix socket, a proxy that hid it)
+ * is never held back — the budget makes guessing expensive, it does not lock anyone out.
+ */
+export function authClientKey(address: string | null, forwarded: boolean): string | null {
+  if (address === null) return null;
+  return forwarded ? `proxied:${address}` : address;
+}
 
 /** Malformed pairs are skipped: a junk cookie from another app must not deny the user. */
 export function parseCookies(header: string | null): Map<string, string> {
@@ -49,13 +75,42 @@ function matches(candidate: string, token: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/** The token this request claims to hold: the cookie, an Authorization Bearer, or none at all. */
+function offeredToken(request: Request): string | null {
+  const cookie = parseCookies(request.headers.get("cookie")).get(TOKEN_COOKIE);
+  if (cookie !== undefined) return cookie;
+  const authorization = request.headers.get("authorization") ?? "";
+  if (authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) return null;
+  return authorization.slice(BEARER_PREFIX.length);
+}
+
 export function isAuthenticated(request: Request, token: string): boolean {
   if (token === "") return true;
-  const cookie = parseCookies(request.headers.get("cookie")).get(COOKIE_NAME);
-  if (cookie !== undefined && matches(cookie, token)) return true;
-  const authorization = request.headers.get("authorization") ?? "";
-  if (authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) return false;
-  return matches(authorization.slice(BEARER_PREFIX.length), token);
+  const offered = offeredToken(request);
+  return offered !== null && matches(offered, token);
+}
+
+/**
+ * One token check on a path the gate closes, accounting included: a wrong token offered
+ * anywhere — posted to /api/auth, sent as a Bearer header, or held in the cookie — is a guess,
+ * and costs whichever client offered it. A request that offers nothing is not a guess: it costs
+ * nothing and is never held, so a client that has spent its budget still gets the sign-in
+ * prompt rather than the wait. A right token spends the client's wait. `wait` is the whole
+ * seconds left after this check, for the 429 that answers a client still spending its budget.
+ */
+export function checkToken(request: Request, token: string, client: string | null): { matched: boolean; wait: number } {
+  if (token === "") return { matched: true, wait: 0 };
+  const offered = offeredToken(request);
+  if (offered === null) return { matched: false, wait: 0 };
+  // the wait is read before the failure is recorded, so the request that spends the budget is
+  // still answered, and the next one held — as /api/auth answers it
+  const wait = authWaitLeft(client);
+  if (!matches(offered, token)) {
+    recordAuthFailure(client);
+    return { matched: false, wait };
+  }
+  authAttempts.delete(client ?? "");
+  return { matched: true, wait: 0 };
 }
 
 /** /api/health, /api/auth and /api/devices/pair stay open so a client can discover the gate and pass it. */
@@ -70,6 +125,10 @@ export function unauthorizedJson(reason: "other_user" | "pairing_required" | "to
   return jsonResponse({ error: { code: "unauthorized", message: reason === "pairing_required" ? "pair this device, or use the token" : "token required" } }, 401);
 }
 
+export function tooManyAttempts(wait: number): Response {
+  return jsonResponse({ error: { code: "too_many_attempts", message: `too many wrong tokens: wait ${wait}s` } }, 429, { "retry-after": String(wait) });
+}
+
 export function isSecureRequest(request: Request): boolean {
   if (request.headers.get("x-forwarded-proto") === "https") return true;
   return new URL(request.url).protocol === "https:";
@@ -77,7 +136,7 @@ export function isSecureRequest(request: Request): boolean {
 
 function sessionCookie(token: string, secure: boolean): string {
   const attributes = `Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_SECONDS}`;
-  return `${COOKIE_NAME}=${encodeURIComponent(token)}; ${attributes}${secure ? "; Secure" : ""}`;
+  return `${TOKEN_COOKIE}=${encodeURIComponent(token)}; ${attributes}${secure ? "; Secure" : ""}`;
 }
 
 export function deviceCookie(token: string, secure: boolean): string {
@@ -90,14 +149,49 @@ export function noContent(...setCookies: string[]): Response {
   return new Response(null, { status: 204, headers });
 }
 
-export async function handleAuthRequest(request: Request, token: string): Promise<Response> {
+/**
+ * How long `client` still has to wait, in whole seconds, or 0. An address with no address
+ * to remember (a unix socket, a proxy that hid it) is never held back: the budget is there
+ * to make guessing expensive, not to lock anyone out.
+ */
+function authWaitLeft(client: string | null): number {
+  if (client === null) return 0;
+  const entry = authAttempts.get(client);
+  const left = entry === undefined ? 0 : entry.until - Date.now();
+  return left <= 0 ? 0 : Math.ceil(left / 1000);
+}
+
+function recordAuthFailure(client: string | null): void {
+  if (client === null) return;
+  const failures = (authAttempts.get(client)?.failures ?? 0) + 1;
+  // the budget is spent first: the failures under it cost nothing but the answer they got
+  const wait = failures < AUTH_FAILURE_BUDGET ? 0 : Math.min(AUTH_BACKOFF_MS * 2 ** (failures - AUTH_FAILURE_BUDGET), AUTH_BACKOFF_MAX_MS);
+  authAttempts.set(client, { failures, until: wait === 0 ? 0 : Date.now() + wait });
+  if (authAttempts.size <= AUTH_CLIENTS_MAX) return;
+  // over the cap: an address whose wait is over first, else the oldest
+  for (const [address, entry] of authAttempts) {
+    if (authAttempts.size <= AUTH_CLIENTS_MAX / 2) return;
+    if (entry.until !== 0 && entry.until > Date.now()) continue;
+    authAttempts.delete(address);
+  }
+  while (authAttempts.size > AUTH_CLIENTS_MAX) authAttempts.delete(authAttempts.keys().next().value!);
+}
+
+/** Forget every address's budget (tests share this module's state). */
+export function forgetAuthAttempts(): void {
+  authAttempts.clear();
+}
+
+export async function handleAuthRequest(request: Request, token: string, client: string | null = null): Promise<Response> {
   if (request.method === "DELETE") {
     // signing out drops both credentials this browser may hold
-    return noContent(`${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, `${DEVICE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+    return noContent(`${TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, `${DEVICE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
   }
   if (request.method !== "POST") return badRequest("method_not_allowed", "use POST or DELETE");
   // Gate off: answering 204 without a cookie lets one client flow work either way.
   if (token === "") return noContent();
+  const wait = authWaitLeft(client);
+  if (wait > 0) return tooManyAttempts(wait);
 
   let payload: unknown;
   try {
@@ -111,7 +205,9 @@ export async function handleAuthRequest(request: Request, token: string): Promis
   const offered = payload.token;
   if (typeof offered !== "string") return badRequest("missing_token", "token is required");
   if (!matches(offered, token)) {
+    recordAuthFailure(client);
     return jsonResponse({ error: { code: "invalid_token", message: "token does not match" } }, 401);
   }
+  authAttempts.delete(client ?? "");
   return noContent(sessionCookie(token, isSecureRequest(request)));
 }

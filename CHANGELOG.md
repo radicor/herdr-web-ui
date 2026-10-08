@@ -7,6 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- **Settings → Terminal → Clipboard from a pane** is off by default. A program running in a pane —
+  an agent's tool calls included — cannot put text on this device's clipboard until you turn it on,
+  so nothing a pane writes lands in what you paste elsewhere. Turn it on for the editors and
+  multiplexers that copy through the terminal (vim, tmux); with it off, a pane that asks to copy is
+  ignored, as a terminal that cannot reach the clipboard already is.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+
 ### Changed
 - **A server with no token and no paired device no longer lets a LAN or proxied client in.** Until
   a device is paired, a client that is not this PC is asked to pair with a code the owner starts on
@@ -20,6 +28,25 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   keeps a credential from being minted if a path ever lets one through. Completing a pairing with a
   code still works from anywhere, as before.
   ([#569](https://github.com/devswha/herdr-web-ui/pull/569) by @radicor)
+- A wrong access token costs the client that offered it, wherever it is offered — posted to
+  `/api/auth`, sent as an `Authorization: Bearer`, or held in the cookie — where before only
+  `/api/auth` was counted. Five wrong tries buy a wait that doubles with every further failure up to
+  a minute, the wait is spent again by one right token, and a client behind a proxy is counted apart
+  from this PC's own address, so one stranger's guesses cannot spend the budget the owner's own
+  sign-in is counted in. A request that offers no token is never held, so a client that has spent its
+  budget still gets the sign-in prompt.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- The app sends itself a Content-Security-Policy: script, style, image, font, connection, frame and
+  worker sources are same-origin only, so third-party content rendered in a chat — math, agent marks
+  — cannot run script in the app or talk to another host. Styles keep `'unsafe-inline'`, which xterm
+  needs to build its layers. `HERDR_WEB_CSP=report-only` reports what the policy would block, without
+  enforcing it.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- A web-push subscription must be an https endpoint. A browser never hands an http: one over, so this
+  is only the shape that would turn the server into a POST from inside the user's network at a host no
+  page could reach — a router's admin page, a link-local metadata address. Loopback http stays, for a
+  local test push service.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
 
 ### Fixed
 - Secret input and the Codex follow-up fallback validate the live screen, so a password
@@ -41,12 +68,37 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   minified file, no longer freezes the chat: a megabyte of them took a minute or more to read, and
   now takes milliseconds. What every message shows is unchanged.
   ([#574](https://github.com/devswha/herdr-web-ui/pull/574))
+- A 500 from the server no longer repeats the system's own error text, which carried absolute paths
+  and the herdr socket location: it names a short id to quote in a bug report, and the exception is
+  logged on the server beside it.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- A pane read whose `source` or `format` is outside the route's own enums is refused with
+  `invalid_source` or `invalid_format` instead of being passed to herdr as a guess. The generated
+  types are open-ended, and herdr answers a `target` it does not understand as the focused pane.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- Closing a pane drops what its chat parsed, in every transcript reader (pi, codex, claude, gjc) and
+  not only this server's own cache: the caches are keyed by file, so a pane reading the same
+  transcript as a closed one no longer holds the closed pane's parse of it.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- A link printed in the terminal opens only if it is an http(s) address, on both of the terminal's
+  link paths — the addon that opens what it underlines had no check of its own.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- A tab watching several busy panes gives up its oldest cached conversation answers once they
+  together pass a byte budget, not only past sixteen of them: sixteen polled panes is a small number
+  of bodies, each as large as the server makes it.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- A remote-PC proxy request that fails says which PC and which path failed, and a timed-out call is a
+  504 rather than a 502, so a slow PC is not reported as an unreachable one.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
+- The Windows mirror loop no longer stops without a `pty-exit` when a screen does not parse: the
+  read, the flush and the reschedule are all inside the guard, and a throw ends the session the way a
+  closed pane does.
+  ([#1](https://github.com/radicor/herdr-web-ui/pull/1) by @radicor)
 
 ### Maintenance
 - The terminal now announces itself: it is a labelled region named after the pane, so a screen
   reader names the pane before its content.
   ([#569](https://github.com/devswha/herdr-web-ui/pull/569) by @radicor)
-
 ## [0.4.0] - 2026-10-08
 
 ### Added
