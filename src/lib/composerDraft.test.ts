@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ComposerDraftStore } from "./composerDraft.ts";
+import { ComposerDraftStore, SEND_LEASE_MS, reconcileStorageKey } from "./composerDraft.ts";
 function fixture() {
   const data = new Map<string, string>();
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); }, removeItem: (key: string) => { data.delete(key); } };
@@ -59,4 +59,60 @@ it("keeps a draft another tab cleared and retyped while this tab's send was on i
   data.set("a", "sent again"); store.refresh("a");
   expect(store.settle("a", "sent")).toEqual({ text: "sent again", edited: true });
   store.end("a");
+});
+it("refuses a second tab's send while the first is still on its way", () => {
+  const { data, store: first } = fixture();
+  const second = new ComposerDraftStore(() => ({
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { data.set(key, value); },
+    removeItem: (key: string) => { data.delete(key); },
+  }));
+  first.set("a", "do the thing");
+  first.begin("a", "do the thing");
+  // the other tab reads the same draft and sees the send, so it cannot send it again
+  second.read("a");
+  second.refresh("a");
+  expect(second.read("a")).toEqual({ text: "do the thing", sending: true });
+  expect(second.begin("a")).toBe(false);
+  // the first tab's end is what releases it, and the draft text is still there to send
+  first.end("a");
+  second.refresh("a");
+  expect(second.read("a")).toEqual({ text: "do the thing", sending: false });
+  expect(second.begin("a")).toBe(true);
+});
+it("honours another tab's send as a lease, not forever", () => {
+  const { data, store } = fixture();
+  data.set("herdr-web-ui:composer-sending:a", JSON.stringify({ sent: "x", at: Date.now() - SEND_LEASE_MS - 1 }));
+  store.read("a");
+  store.refresh("a");
+  expect(store.read("a").sending).toBe(false);
+  expect(store.begin("a")).toBe(true);
+});
+it("ignores a hand-edited sending record instead of blocking the pane", () => {
+  const { data, store } = fixture();
+  data.set("herdr-web-ui:composer-sending:a", "not json");
+  store.read("a");
+  store.refresh("a");
+  expect(store.begin("a")).toBe(true);
+});
+it("still reconciles another tab's text when no send is in flight", () => {
+  const { data, store } = fixture();
+  store.set("a", "mine");
+  store.refresh("a");
+  data.set("a", "theirs");
+  store.refresh("a");
+  expect(store.read("a").text).toBe("theirs");
+});
+it("reconciles another tab's edit from the draft key itself, and a send through its prefix", () => {
+  const { data, store } = fixture();
+  const key = "herdr-web-ui:composer-draft:local:w1:p1";
+  store.set(key, "mine");
+  // the listener sees the draft key, not a sending one: it must not slice it
+  data.set(key, "another tab's edit");
+  reconcileStorageKey(key, store);
+  expect(store.read(key).text).toBe("another tab's edit");
+  // a send is written under the sending prefix, and reaches the same draft once it is trimmed
+  data.set(`herdr-web-ui:composer-sending:${key}`, JSON.stringify({ sent: "x", at: Date.now() }));
+  reconcileStorageKey(`herdr-web-ui:composer-sending:${key}`, store);
+  expect(store.read(key).sending).toBe(true);
 });
