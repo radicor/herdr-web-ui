@@ -181,7 +181,8 @@ Tell the user the HTTPS address. Until a device is paired, and with no token set
 address is closed to everyone but this PC: a client that is not a paired device is told to pair, and
 pairing is started from this PC. Set `HERDR_WEB_ALLOW_OPEN=1` only when the user asks
 for the older behaviour, where anything that reaches the address types into the terminals until a
-device is paired.
+device is paired. A token sent over plain `http://` is readable by anyone on the
+network path: prefer HTTPS (Tailscale or a TLS-terminating proxy) for any address others can reach.
 
 Other PCs over SSH are added from the web UI (Settings → Remote PCs → **Add PC**), not by an install step here.
 
