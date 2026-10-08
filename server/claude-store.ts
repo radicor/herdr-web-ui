@@ -160,6 +160,11 @@ export function forgetClaudeSessions(): void {
   processDirs.clear();
 }
 
+/** Drops what a project scan remembered about one transcript file: the scan runs again if it is ever asked for. */
+export function forgetClaudeSessionFile(path: string): void {
+  for (const [key, value] of found) if (value === path) found.delete(key);
+}
+
 /** macOS has no /proc: Claude records the process's start as `ps -o lstart` text in UTC, which a reused PID cannot repeat. */
 async function darwinProcessStart(pid: number): Promise<string | null> {
   const child = Bun.spawn(["/bin/ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore", env: { ...process.env, TZ: "UTC" } });
