@@ -41,6 +41,39 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   minified file, no longer freezes the chat: a megabyte of them took a minute or more to read, and
   now takes milliseconds. What every message shows is unchanged.
   ([#574](https://github.com/devswha/herdr-web-ui/pull/574))
+- Settings, the command palette, the file viewer, the file browser and the new-workspace dialog
+  keep Tab inside them and give the focus back to whatever opened them. Settings also keeps the
+  focus where its opening page put it, instead of moving it to the back button.
+- The tabs of a workspace name the pane region they govern, so a screen reader announces the tab
+  and the pane together. The pane's region no longer replaces the page's own main landmark to get
+  there.
+- Agent headings in a chat no longer pose as the app's own page structure; they sit below the
+  app's own headings and look the same as before.
+- The "reconnecting" line and the composer's terminal-only hint are announced when they appear.
+- A chat locked out by the token gate, the "Last checked" line under Settings → Updates (with its
+  date in your language) and a remote PC's state word in the sidebar are translated like the rest
+  of the UI.
+- The alerts menu item now says the same thing the same way in every state.
+- A row's ⋯ menu is capped to the room its button leaves and scrolls instead of being cut off by
+  the viewport, so the pane picker of a tab with many panes keeps every entry reachable with the
+  pointer as well as the keyboard. Before, items below the fold were rendered but unreachable.
+- A row menu open while the window crosses the 640 px breakpoint now switches between bottom sheet
+  and popover instead of keeping the form it opened with.
+- The workspace drawer a narrow window opened is closed again when the window is widened past
+  768 px, so narrowing it no longer brings back a drawer and its scrim unasked.
+- **Add PC**, **Reconnect PC** and **Update remote bridge** open as a bottom sheet on a phone,
+  like every other dialog, and keep clear of the on-screen keyboard. Before, the one native
+  dialog stayed a centred card on a phone.
+- **Remove PC**'s first click is a quiet ghost button that only arms the removal; the second is
+  the red one, as revoking a device already was.
+- A PC's rename, connect and disconnect buttons disable while their request is in flight, so a
+  double click no longer sends two overlapping requests.
+- A failed pane or workspace rename keeps the field open with what you typed, so a network blip
+  no longer makes you write the name again.
+- A workspace reorder that fails no longer undoes a later, successful reorder.
+- The usage meters' note is the same size as every other advisory and empty state.
+- The PDF viewer's page colour, the pill radii, the tab dot and the pairing-code size come from
+  design tokens now, and the pairing code follows the compact density setting.
 
 ### Maintenance
 - The terminal now announces itself: it is a labelled region named after the pane, so a screen
