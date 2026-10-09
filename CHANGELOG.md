@@ -43,6 +43,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   math, agent marks — cannot run script in the app.
 - A web-push subscription must be an https endpoint, and a watching device can no longer make the
   server send a notification to an address of its choosing.
+- A request that arrives with a session or device cookie but no `Origin` is no longer read as
+  same-origin: every mutation but three is refused until the client states where it came from or
+  proves itself with the app's own mutation header. The three exceptions are the ones such a
+  client genuinely cannot prove — the terminal's WebSocket, which a browser cannot attach a
+  header to, and the two endpoints that touch only the sending device's own session. Before, an
+  absent `Origin` satisfied the check by itself.
 
 ### Fixed
 - With Language set to **System**, English stays selected when it is the browser's first
