@@ -2134,9 +2134,12 @@ export function createServer(
                 releaseUnclaimed(message.pane_id, attachment);
                 break;
               }
-              // a mirror whose pane went away during its first read has already ended: joining
-              // it would leave this client on a terminal that never says anything again
-              if (attachment.mirror && attachments.get(message.pane_id) !== attachment) {
+              // an attachment that is no longer this pane's has ended, mirror or pty alike: a
+              // mirror whose pane went away during its first read, and a pty that exited while
+              // the lookup above was running, both close the attachment after this claim was
+              // recorded. Joining it would leave this client on a terminal that never says
+              // anything again, and the pty-exit broadcast has already gone out.
+              if (attachments.get(message.pane_id) !== attachment) {
                 client.data.attached.delete(message.pane_id);
                 send(client, { type: "pty-exit", pane_id: message.pane_id, code: null });
                 break;
@@ -2214,6 +2217,14 @@ export function createServer(
               // The turn is taken before herdr is asked what it can do: a message sent while
               // that answer is on its way must not overtake the typing.
               if (terminalAttachKnown === false || (!attachment && terminalAttachKnown === null)) {
+                // an attach this client is not a member of owns this pane's screen, and typing
+                // here would reach past it — the same refusal the pty branch below makes. A
+                // pane with no attachment at all is left as it was: that is the key bar, and
+                // an older bridge's composer send, neither of which attaches first.
+                if (attachment && !attachment.clients.has(client)) {
+                  send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
+                  break;
+                }
                 const text = message.text;
                 // typed into this attach, or into none: one left meanwhile (even attached again) takes none of it
                 const origin = attachment?.clients.has(client) ? attachment : undefined;
